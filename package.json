@@ -1,0 +1,11 @@
+{
+  "name": "dr-simulation",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Multi-region disaster recovery simulator",
+  "scripts": {
+    "start": "docker compose up --build -d",
+    "test": "node test/engine.test.js && node test/smoke.test.js"
+  },
+  "engines": { "node": ">=20" }
+}

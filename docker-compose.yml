@@ -1,0 +1,47 @@
+# Local multi-region Disaster Recovery simulation
+#   primary          -> "us-east-1"  (serves all traffic while healthy)
+#   secondary        -> "us-west-2"  (hot standby, receives replicated data)
+#   traffic-manager  -> Route 53 / Traffic Manager stand-in + dashboard + fault injector
+#
+# Open http://localhost:8080
+
+services:
+  primary:
+    build: ./region
+    container_name: dr_primary
+    environment:
+      REGION_ID: primary
+      REGION_NAME: us-east-1
+      PEER_URL: http://secondary:80
+      REPL_DELAY_MS: "1500"
+    ports:
+      - "8081:80"          # talk to this region directly (bypasses the traffic manager)
+
+  secondary:
+    build: ./region
+    container_name: dr_secondary
+    environment:
+      REGION_ID: secondary
+      REGION_NAME: us-west-2
+      PEER_URL: http://primary:80
+      REPL_DELAY_MS: "1500"
+    ports:
+      - "8082:80"
+
+  traffic-manager:
+    build: ./traffic-manager
+    container_name: dr_traffic_manager
+    environment:
+      PRIMARY_URL: http://primary:80
+      SECONDARY_URL: http://secondary:80
+      PRIMARY_CONTAINER: dr_primary
+      SECONDARY_CONTAINER: dr_secondary
+    ports:
+      - "8080:80"          # dashboard + global endpoint
+    volumes:
+      # Lets the dashboard run a real `docker kill` / `docker start` on the region containers.
+      # Demo only: never mount the Docker socket into anything exposed to a network.
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - primary
+      - secondary

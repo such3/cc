@@ -1,0 +1,54 @@
+# Runs on every push and pull request: unit tests, then a REAL Docker failover test.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Syntax check
+        run: |
+          node --check region/server.js
+          node --check traffic-manager/server.js
+          node --check traffic-manager/public/engine.js
+      - name: Engine and server tests
+        run: npm test
+
+  docker-e2e:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and start the stack
+        run: docker compose up --build -d
+      - name: Wait until healthy
+        run: |
+          for i in $(seq 1 40); do
+            [ "$(curl -sf localhost:8080/state | jq -r .phase)" = "normal" ] && exit 0
+            sleep 1
+          done
+          docker compose logs; exit 1
+      - name: Crash the primary with docker kill and expect failover
+        run: |
+          curl -sf -XPOST localhost:8080/control/fail -H 'content-type: application/json' -d '{"region":"primary","mode":"kill"}'
+          sleep 6
+          [ "$(curl -sf localhost:8080/state | jq -r .active)" = "secondary" ] || { docker compose logs traffic-manager; exit 1; }
+          [ "$(docker inspect -f '{{.State.Running}}' dr_primary)" = "false" ] || { echo "primary container still running"; exit 1; }
+      - name: Restore and expect failback
+        run: |
+          curl -sf -XPOST localhost:8080/control/restore -H 'content-type: application/json' -d '{"region":"primary"}'
+          for i in $(seq 1 30); do
+            [ "$(curl -sf localhost:8080/state | jq -r .active)" = "primary" ] && exit 0
+            sleep 1
+          done
+          docker compose logs traffic-manager; exit 1
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
